@@ -1,0 +1,229 @@
+diff --git a/Trio/Sources/Application/TrioApp.swift b/Trio/Sources/Application/TrioApp.swift
+index 7b22422..3491ec8 100644
+--- a/Trio/Sources/Application/TrioApp.swift
++++ b/Trio/Sources/Application/TrioApp.swift
+@@ -535,6 +535,8 @@ extension Notification.Name {
+         switch components?.host {
+         case "device-select-resp":
+             resolver.resolve(NotificationCenter.self)!.post(name: .openFromGarminConnect, object: url)
++        case "meal":
++            MealLink.shared.handle(url: url, resolver: resolver)
+         default: break
+         }
+     }
+diff --git a/Trio/Sources/Modules/Treatments/TreatmentsStateModel.swift b/Trio/Sources/Modules/Treatments/TreatmentsStateModel.swift
+index 970cbff..ac3d67e 100644
+--- a/Trio/Sources/Modules/Treatments/TreatmentsStateModel.swift
++++ b/Trio/Sources/Modules/Treatments/TreatmentsStateModel.swift
+@@ -214,6 +214,7 @@ extension Treatments {
+             }
+ 
+             debug(.bolusState, "subscribe fired")
++            if let meal = MealLink.shared.takePendingMeal() { carbs = meal.carbs; note = meal.note }
+             setupBolusStateConcurrently()
+             subscribeToBolusProgress()
+         }
+diff --git a/Trio/Sources/Modules/Treatments/View/TreatmentsRootView.swift b/Trio/Sources/Modules/Treatments/View/TreatmentsRootView.swift
+index 4961132..f24066e 100644
+--- a/Trio/Sources/Modules/Treatments/View/TreatmentsRootView.swift
++++ b/Trio/Sources/Modules/Treatments/View/TreatmentsRootView.swift
+@@ -213,6 +213,7 @@ extension Treatments {
+ 
+                         Section {
+                             carbsTextField()
++                            MealLinkBanner()
+ 
+                             if state.useFPUconversion {
+                                 proteinAndFat()
+diff --git a/Trio/Sources/TrioCustom/MealLink.swift b/Trio/Sources/TrioCustom/MealLink.swift
+new file mode 100644
+index 0000000..6e58fa3
+--- /dev/null
++++ b/Trio/Sources/TrioCustom/MealLink.swift
+@@ -0,0 +1,64 @@
++import Combine
++import Foundation
++import Swinject
++
++/// Hand-off from a `Trio://meal?carbs=…` link to the bolus calculator.
++/// The link only pre-fills the carbs and note fields. Trio's own calculator, warnings and confirmation still apply.
++final class MealLink: ObservableObject {
++    static let shared = MealLink()
++
++    enum Outcome: Equatable {
++        case filled(carbs: Decimal, note: String)
++        case refused(String)
++    }
++
++    /// Shown as a banner in the calculator until dismissed or the calculator closes.
++    @Published private(set) var outcome: Outcome?
++
++    private var pending: MealLinkParser.Result?
++    private var receivedAt = Date.distantPast
++
++    /// A prefill that sits unused (for example the calculator never opened) is dropped after this long.
++    private let pendingLifetime: TimeInterval = 5 * 60
++
++    /// Called from `TrioApp.handleURL`.
++    func handle(url: URL, resolver: Resolver) {
++        guard let settings = resolver.resolve(SettingsManager.self),
++              let router = resolver.resolve(Router.self)
++        else { return }
++
++        pending = MealLinkParser.parse(url, maxCarbs: settings.settings.maxCarbs)
++        receivedAt = Date()
++
++        // If the calculator is already open, close it first so a fresh one reads the new values.
++        if router.mainModalScreen.value != nil {
++            router.mainModalScreen.send(nil)
++            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
++                router.mainModalScreen.send(.treatmentView)
++            }
++        } else {
++            router.mainModalScreen.send(.treatmentView)
++        }
++    }
++
++    /// Called from `Treatments.StateModel.subscribe()`. Returns the carbs and note to fill in, if any.
++    func takePendingMeal() -> (carbs: Decimal, note: String)? {
++        defer { pending = nil }
++        guard let pending, Date().timeIntervalSince(receivedAt) < pendingLifetime else {
++            outcome = nil
++            return nil
++        }
++        switch pending {
++        case let .meal(carbs, note):
++            outcome = .filled(carbs: carbs, note: note)
++            return (carbs, note)
++        case let .rejected(reason):
++            outcome = .refused(reason)
++            return nil
++        }
++    }
++
++    func dismissBanner() {
++        outcome = nil
++    }
++}
+diff --git a/Trio/Sources/TrioCustom/MealLinkBanner.swift b/Trio/Sources/TrioCustom/MealLinkBanner.swift
+new file mode 100644
+index 0000000..301986d
+--- /dev/null
++++ b/Trio/Sources/TrioCustom/MealLinkBanner.swift
+@@ -0,0 +1,50 @@
++import SwiftUI
++
++/// Banner shown above the carbs field after a meal link, so the source of the number is visible.
++struct MealLinkBanner: View {
++    @ObservedObject private var link = MealLink.shared
++
++    var body: some View {
++        if let outcome = link.outcome {
++            HStack {
++                Image(systemName: icon(for: outcome))
++                Text(message(for: outcome)).font(.callout)
++                Spacer()
++                Button {
++                    withAnimation { link.dismissBanner() }
++                } label: {
++                    Image(systemName: "xmark.circle.fill")
++                }
++                .buttonStyle(.plain)
++                .accessibilityLabel(Text("Dismiss"))
++            }
++            .listRowBackground(color(for: outcome).opacity(0.75))
++            .transition(.opacity)
++        }
++    }
++
++    private func icon(for outcome: MealLink.Outcome) -> String {
++        switch outcome {
++        case .filled: "camera.viewfinder"
++        case .refused: "exclamationmark.triangle"
++        }
++    }
++
++    private func color(for outcome: MealLink.Outcome) -> Color {
++        switch outcome {
++        case .filled: .blue
++        case .refused: .orange
++        }
++    }
++
++    private func message(for outcome: MealLink.Outcome) -> String {
++        switch outcome {
++        case let .filled(carbs, note):
++            note.isEmpty
++                ? "Carbs filled in from your shortcut: \(carbs) g (an estimate). Check it before you bolus."
++                : "Filled in from your shortcut: \(carbs) g for \(note) (an estimate). Check it before you bolus."
++        case let .refused(reason):
++            reason
++        }
++    }
++}
+diff --git a/Trio/Sources/TrioCustom/MealLinkParser.swift b/Trio/Sources/TrioCustom/MealLinkParser.swift
+new file mode 100644
+index 0000000..22e76d9
+--- /dev/null
++++ b/Trio/Sources/TrioCustom/MealLinkParser.swift
+@@ -0,0 +1,60 @@
++import Foundation
++
++/// Pure parsing and validation for `Trio://meal?carbs=45&note=Pasta&t=1760000000` links.
++/// Carbs and a short food note only: the link never carries fat, protein or an insulin amount,
++/// and never enacts anything.
++enum MealLinkParser {
++    /// A link older than this (by its `t` timestamp) is refused.
++    static let maxLinkAge: TimeInterval = 10 * 60
++    /// Clock skew tolerated for a `t` timestamp in the future.
++    static let maxFutureSkew: TimeInterval = 2 * 60
++
++    /// Matches the length limit of the calculator's own Note field.
++    static let maxNoteLength = 25
++
++    enum Result: Equatable {
++        case meal(carbs: Decimal, note: String)
++        case rejected(String)
++    }
++
++    static func parse(_ url: URL, maxCarbs: Decimal, now: Date = Date()) -> Result {
++        guard let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems else {
++            return .rejected("The link has no carbs value.")
++        }
++
++        if let rawTime = items.first(where: { $0.name == "t" })?.value {
++            guard let seconds = TimeInterval(rawTime) else {
++                return .rejected("The link's time stamp is not valid.")
++            }
++            let age = now.timeIntervalSince(Date(timeIntervalSince1970: seconds))
++            if age > maxLinkAge { return .rejected("The link is too old. Run the shortcut again.") }
++            if age < -maxFutureSkew { return .rejected("The link's time stamp is in the future.") }
++        }
++
++        guard let rawCarbs = items.first(where: { $0.name == "carbs" })?.value,
++              let value = Decimal(string: rawCarbs, locale: Locale(identifier: "en_US_POSIX")),
++              value.isFinite
++        else {
++            return .rejected("The link has no valid carbs value.")
++        }
++
++        var rounded = Decimal()
++        var source = value
++        NSDecimalRound(&rounded, &source, 0, .plain)
++
++        guard rounded >= 1 else { return .rejected("Carbs must be at least 1 g.") }
++        guard rounded <= maxCarbs else {
++            return .rejected("\(rounded) g is above your max carbs (\(maxCarbs) g), so it was not filled in.")
++        }
++        let rawNote = items.first(where: { $0.name == "note" })?.value ?? ""
++        return .meal(carbs: rounded, note: cleanNote(rawNote))
++    }
++
++    /// Plain text only: control characters (including line breaks) become spaces, runs of spaces
++    /// collapse, and the result is trimmed and cut to the Note field's length limit.
++    static func cleanNote(_ raw: String) -> String {
++        let spaced = String(raw.unicodeScalars.map { CharacterSet.controlCharacters.contains($0) ? " " : Character($0) })
++        let collapsed = spaced.split(separator: " ", omittingEmptySubsequences: true).joined(separator: " ")
++        return String(collapsed.prefix(maxNoteLength)).trimmingCharacters(in: .whitespaces)
++    }
++}

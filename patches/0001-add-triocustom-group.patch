@@ -1,0 +1,30 @@
+diff --git a/Trio.xcodeproj/project.pbxproj b/Trio.xcodeproj/project.pbxproj
+index ca2a28d..5a7d181 100644
+--- a/Trio.xcodeproj/project.pbxproj
++++ b/Trio.xcodeproj/project.pbxproj
+@@ -2075,6 +2075,7 @@
+ /* Begin PBXFileSystemSynchronizedRootGroup section */
+ 		BDFF7A9E2D25FA970016C40C /* Preview Content */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); path = "Preview Content"; sourceTree = "<group>"; };
+ 		DDCEBF412CC1B42500DF4C36 /* Views */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); path = Views; sourceTree = "<group>"; };
++		7C0DE0010000000000000001 /* TrioCustom */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); path = TrioCustom; sourceTree = "<group>"; };
+ /* End PBXFileSystemSynchronizedRootGroup section */
+ 
+ /* Begin PBXFrameworksBuildPhase section */
+@@ -2480,6 +2481,7 @@
+ 				3811DE1425C9D40400A708ED /* Router */,
+ 				3811DE9125C9D88200A708ED /* Services */,
+ 				3883582E25EEAFC000E024B2 /* Views */,
++				7C0DE0010000000000000001 /* TrioCustom */,
+ 			);
+ 			path = Sources;
+ 			sourceTree = "<group>";
+@@ -4823,6 +4825,9 @@
+ 				6B1A8D272B14D91700E76752 /* PBXTargetDependency */,
+ 				BDFF799E2D25AA890016C40C /* PBXTargetDependency */,
+ 			);
++			fileSystemSynchronizedGroups = (
++				7C0DE0010000000000000001 /* TrioCustom */,
++			);
+ 			name = Trio;
+ 			packageProductDependencies = (
+ 				3811DE0F25C9D37700A708ED /* Swinject */,
